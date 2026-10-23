@@ -1,0 +1,105 @@
+
+name: DRPS QA Automation - Checkout and Renewal
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "30 3 * * 1-5"
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: drps-qa-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    env:
+      CI: "true"
+      BASE_URL: ${{ vars.BASE_URL || 'https://qaoci.quickheal.co.in' }}
+      PRODUCT_URL: ${{ vars.PRODUCT_URL || 'https://qaoci.quickheal.co.in/qh-drps' }}
+      CART_URL: ${{ vars.CART_URL }}
+      CHECKOUT_URL: ${{ vars.CHECKOUT_URL }}
+      RENEW_URL: ${{ vars.RENEW_URL || 'https://qaoci.quickheal.co.in/quick-heal-product-renew' }}
+      RENEWAL_LICENSE_KEY: ${{ secrets.RENEWAL_LICENSE_KEY }}
+      ALLOW_PAYMENT_SUBMISSION: "false"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install project dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Diagnose QA staging reachability
+        continue-on-error: true
+        run: |
+          for url in \
+            "https://qaoci.quickheal.co.in/qh-drps" \
+            "https://qaoci.quickheal.co.in/"
+          do
+            echo "::group::Checking $url"
+            curl -sSIL --max-time 25 "$url" || true
+            echo "::endgroup::"
+          done
+
+      - name: Run Playwright checkout and renewal tests
+        id: tests
+        continue-on-error: true
+        run: npx playwright test
+
+      - name: Build sanitized report summary
+        if: always()
+        env:
+          TEST_OUTCOME: ${{ steps.tests.outcome }}
+          RUN_NUMBER: ${{ github.run_number }}
+          RUN_SHA: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: node scripts/build-summary.mjs
+
+      - name: Upload detailed Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: drps-playwright-report-${{ github.run_number }}
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Configure GitHub Pages
+        if: always() && github.event_name != 'pull_request'
+        uses: actions/configure-pages@v5
+
+      - name: Upload status page
+        if: always() && github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: pages-summary
+
+      - name: Deploy status page
+        if: always() && github.event_name != 'pull_request'
+        uses: actions/deploy-pages@v4
+
+      - name: Fail workflow if tests failed
+        if: steps.tests.outcome == 'failure'
+        run: exit 1
