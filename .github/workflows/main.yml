@@ -63,7 +63,8 @@ jobs:
 
   qa-oci-checkout-renewal:
     name: "2. QA OCI Checkout & Renewal"
-    runs-on: ubuntu-latest
+    # Set QA_RUNNER_LABELS to ["self-hosted","linux","x64"] after DevOps registers an authorized runner.
+    runs-on: ${{ fromJSON(vars.QA_RUNNER_LABELS || '["ubuntu-latest"]') }}
     timeout-minutes: 35
     env:
       CI: "true"
@@ -128,6 +129,9 @@ jobs:
       - production-live-site
       - qa-oci-checkout-renewal
     if: always()
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
