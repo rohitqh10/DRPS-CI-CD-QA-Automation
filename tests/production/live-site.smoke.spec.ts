@@ -87,11 +87,19 @@ test.describe('Quick Heal production purchase journey | non-transactional', () =
     expect(response!.status()).toBeLessThan(400);
 
     const productName = 'Quick Heal Total Security';
-    const productHeading = page.getByText(productName, { exact: true }).first();
-    await expect(productHeading, 'Expected product is not visible in the catalogue').toBeVisible();
+    // The live site renders hidden desktop/mobile navigation copies of product links.
+    // Target the actual visible product-card link instead of the first matching hidden anchor.
+    const productLink = page.locator(
+      'a[href*="/home-users/quick-heal-total-security"]:visible'
+    ).filter({ hasText: productName }).first();
+    await expect(
+      productLink,
+      'Visible Quick Heal Total Security product link was not found in the catalogue'
+    ).toBeVisible();
+    await productLink.scrollIntoViewIfNeeded();
 
-    // Find the nearest product card that contains both plan selectors and a Buy Now action.
-    const productCard = productHeading.locator(
+    // Find the nearest visible product card that contains the plan selectors and Buy Now action.
+    const productCard = productLink.locator(
       'xpath=ancestor::*[.//select and .//*[contains(normalize-space(), "Buy Now")]][1]'
     );
     await expect(productCard, 'Could not identify the product card with plan selectors').toBeVisible();
