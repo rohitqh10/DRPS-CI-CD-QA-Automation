@@ -19,6 +19,7 @@ This repository runs two independent Playwright suites and publishes a combined 
 Under **Settings → Secrets and variables → Actions**:
 
 Optional variables for QA OCI:
+- `QA_RUNNER_LABELS` = `["self-hosted","linux","x64"]` after DevOps registers an authorized runner. Leave unset to use GitHub-hosted Ubuntu.
 - `BASE_URL` = `https://qaoci.quickheal.co.in`
 - `PRODUCT_URL` = `https://qaoci.quickheal.co.in/qh-drps`
 - `CART_URL` = authorized QA cart URL, if needed
@@ -32,7 +33,7 @@ Optional secret:
 
 Previous GitHub-hosted runner logs showed that `qaoci.quickheal.co.in` timed out. This workflow checks QA access first and skips the QA Playwright run if the runner cannot reach the staging site, then marks the QA job as failed with a clear message.
 
-If QA OCI is restricted to the company network, ask Quick Heal DevOps to register an authorized self-hosted GitHub Actions runner with access to QA OCI. After it is registered, update the `runs-on` value in the `qa-oci-checkout-renewal` job from `ubuntu-latest` to the approved runner labels. Do not expose the QA environment publicly just to make the workflow pass.
+If QA OCI is restricted to the company network, ask Quick Heal DevOps to register an authorized self-hosted GitHub Actions runner with access to QA OCI. After it is registered, add the repository variable `QA_RUNNER_LABELS` with the JSON value `["self-hosted","linux","x64"]` (or the exact labels DevOps assigns). The workflow uses GitHub-hosted Ubuntu when this variable is absent. Do not expose the QA environment publicly just to make the workflow pass.
 
 ## Reports and evidence
 
