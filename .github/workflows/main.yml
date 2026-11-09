@@ -1,14 +1,10 @@
-
-name: DRPS QA Automation - Checkout and Renewal
+name: Quick Heal | Production & QA Multi-Job Playwright CI
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
   schedule:
-    - cron: "30 3 * * 1-5"
+    # Daily at 03:30 UTC = 09:00 India Standard Time
+    - cron: "30 3 * * *"
 
 permissions:
   contents: read
@@ -16,14 +12,59 @@ permissions:
   id-token: write
 
 concurrency:
-  group: drps-qa-${{ github.ref }}
+  group: quickheal-qa-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  test:
+  production-live-site:
+    name: "1. Production Live Website QA"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CI: "true"
+      PRODUCTION_BASE_URL: https://quickheal.co.in
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Check production website availability
+        run: |
+          set -e
+          curl -fsSL --connect-timeout 10 --max-time 30 -o /dev/null \
+            -w "Production HTTP status: %{http_code}\nResponse time: %{time_total}s\n" \
+            "$PRODUCTION_BASE_URL"
+      - name: Run read-only production tests
+        id: production_tests
+        continue-on-error: true
+        run: npx playwright test tests/production
+      - name: Upload production report and evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quickheal-production-report-${{ github.run_number }}
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Mark production job failed when tests fail
+        if: always()
+        run: |
+          if [ "${{ steps.production_tests.outcome }}" = "failure" ]; then
+            exit 1
+          fi
+
+  qa-oci-checkout-renewal:
+    name: "2. QA OCI Checkout & Renewal"
     runs-on: ubuntu-latest
     timeout-minutes: 35
-
     env:
       CI: "true"
       BASE_URL: ${{ vars.BASE_URL || 'https://qaoci.quickheal.co.in' }}
@@ -33,73 +74,78 @@ jobs:
       RENEW_URL: ${{ vars.RENEW_URL || 'https://qaoci.quickheal.co.in/quick-heal-product-renew' }}
       RENEWAL_LICENSE_KEY: ${{ secrets.RENEWAL_LICENSE_KEY }}
       ALLOW_PAYMENT_SUBMISSION: "false"
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
-
-      - name: Install project dependencies
+      - name: Install dependencies
         run: npm install --no-audit --no-fund
-
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
-
-      - name: Diagnose QA staging reachability
+      - name: Check QA OCI environment access
+        id: qa_reachability
         continue-on-error: true
         run: |
-          for url in \
-            "https://qaoci.quickheal.co.in/qh-drps" \
-            "https://qaoci.quickheal.co.in/"
-          do
-            echo "::group::Checking $url"
-            curl -sSIL --max-time 25 "$url" || true
-            echo "::endgroup::"
-          done
-
-      - name: Run Playwright checkout and renewal tests
-        id: tests
+          set -e
+          curl -fsSIL --connect-timeout 10 --max-time 25 "$PRODUCT_URL"
+          curl -fsSIL --connect-timeout 10 --max-time 25 "$RENEW_URL"
+      - name: Run QA checkout, renewal and quality tests
+        id: qa_tests
+        if: steps.qa_reachability.outcome == 'success'
         continue-on-error: true
-        run: npx playwright test
-
-      - name: Build sanitized report summary
-        if: always()
-        env:
-          TEST_OUTCOME: ${{ steps.tests.outcome }}
-          RUN_NUMBER: ${{ github.run_number }}
-          RUN_SHA: ${{ github.sha }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: node scripts/build-summary.mjs
-
-      - name: Upload detailed Playwright report
+        run: npx playwright test tests/checkout tests/renewal tests/quality
+      - name: Explain QA network restriction
+        if: steps.qa_reachability.outcome == 'failure'
+        run: |
+          echo "::error::GitHub-hosted runner cannot reach QA OCI. Ask Quick Heal DevOps to provide an authorized self-hosted runner or approved network access."
+      - name: Upload QA OCI report and evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: drps-playwright-report-${{ github.run_number }}
+          name: quickheal-qa-oci-report-${{ github.run_number }}
           path: |
             playwright-report/
             test-results/
           if-no-files-found: warn
           retention-days: 14
+      - name: Mark QA job failed when access or tests fail
+        if: always()
+        run: |
+          if [ "${{ steps.qa_reachability.outcome }}" != "success" ]; then
+            exit 1
+          fi
+          if [ "${{ steps.qa_tests.outcome }}" = "failure" ]; then
+            exit 1
+          fi
 
+  publish-qa-summary:
+    name: "3. QA Summary & GitHub Pages Deployment"
+    runs-on: ubuntu-latest
+    needs:
+      - production-live-site
+      - qa-oci-checkout-renewal
+    if: always()
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Build combined execution summary
+        env:
+          PRODUCTION_RESULT: ${{ needs.production-live-site.result }}
+          QA_RESULT: ${{ needs.qa-oci-checkout-renewal.result }}
+          RUN_NUMBER: ${{ github.run_number }}
+          RUN_SHA: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          RUN_TRIGGER: ${{ github.event_name }}
+        run: node scripts/build-summary.mjs
       - name: Configure GitHub Pages
-        if: always() && github.event_name != 'pull_request'
         uses: actions/configure-pages@v5
-
-      - name: Upload status page
-        if: always() && github.event_name != 'pull_request'
+      - name: Upload combined status page
         uses: actions/upload-pages-artifact@v3
         with:
           path: pages-summary
-
-      - name: Deploy status page
-        if: always() && github.event_name != 'pull_request'
+      - name: Deploy combined status page
+        id: deployment
         uses: actions/deploy-pages@v4
-
-      - name: Fail workflow if tests failed
-        if: steps.tests.outcome == 'failure'
-        run: exit 1
