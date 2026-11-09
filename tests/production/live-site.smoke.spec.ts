@@ -74,3 +74,81 @@ test.describe('Quick Heal production website | read-only checks', () => {
     expect(response.status()).toBeLessThan(400);
   });
 });
+
+
+test.describe('Quick Heal production purchase journey | non-transactional', () => {
+  test('customer can select a product and reach the cart without placing an order', async ({ page }) => {
+    const catalogueUrl = new URL('/home-users', liveUrl).toString();
+    const response = await page.goto(catalogueUrl, {
+      waitUntil: 'domcontentloaded',
+      timeout: 30_000
+    });
+    expect(response, 'No response from the Quick Heal product catalogue').not.toBeNull();
+    expect(response!.status()).toBeLessThan(400);
+
+    const productName = 'Quick Heal Total Security';
+    const productHeading = page.getByText(productName, { exact: true }).first();
+    await expect(productHeading, 'Expected product is not visible in the catalogue').toBeVisible();
+
+    // Find the nearest product card that contains both plan selectors and a Buy Now action.
+    const productCard = productHeading.locator(
+      'xpath=ancestor::*[.//select and .//*[contains(normalize-space(), "Buy Now")]][1]'
+    );
+    await expect(productCard, 'Could not identify the product card with plan selectors').toBeVisible();
+
+    const selectors = productCard.locator('select');
+    await expect(selectors, 'Duration and license selectors should be available').toHaveCount(2);
+
+    for (let i = 0; i < 2; i++) {
+      const select = selectors.nth(i);
+      const options = await select.locator('option').evaluateAll(items =>
+        items.map(option => ({
+          value: (option as HTMLOptionElement).value,
+          text: (option as HTMLOptionElement).textContent?.trim() || ''
+        }))
+      );
+      const validOption = options.find(option => option.value && !/select|please/i.test(option.text));
+      expect(validOption, `Selector ${i + 1} has no selectable plan option`).toBeTruthy();
+      await select.selectOption(validOption!.value);
+    }
+
+    // Buy Now may add the selected product to this browser session's cart.
+    // The test deliberately stops at cart/review and never submits checkout/payment.
+    const buyNow = productCard.locator('a, button, input[type="button"], input[type="submit"]')
+      .filter({ hasText: /Buy Now/i })
+      .first();
+    await expect(buyNow, 'Buy Now action is not available for the selected product').toBeVisible();
+
+    await Promise.all([
+      page.waitForLoadState('domcontentloaded').catch(() => undefined),
+      buyNow.click()
+    ]);
+
+    await expect.poll(
+      async () => {
+        const url = page.url().toLowerCase();
+        const body = (await page.locator('body').innerText().catch(() => '')).toLowerCase();
+        return /cart|checkout|basket/.test(url) || /my cart|shopping cart|order summary/.test(body);
+      },
+      { message: 'Buy Now did not navigate to a cart or checkout review state', timeout: 20_000 }
+    ).toBeTruthy();
+
+    const currentUrl = page.url();
+    const bodyText = (await page.locator('body').innerText()).toLowerCase();
+    await test.info().attach('production-cart-checkpoint.txt', {
+      body: [
+        `Product selected: ${productName}`,
+        `Reached URL: ${currentUrl}`,
+        `Cart/checkout review text detected: ${/my cart|shopping cart|order summary/.test(bodyText)}`,
+        'Payment and order submission were not attempted.'
+      ].join('\n'),
+      contentType: 'text/plain'
+    });
+
+    expect(
+      /cart|checkout|basket/.test(currentUrl.toLowerCase()) ||
+      /my cart|shopping cart|order summary/.test(bodyText),
+      'Expected to reach cart or checkout review'
+    ).toBeTruthy();
+  });
+});
