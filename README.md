@@ -47,7 +47,7 @@ Enable **Settings → Pages → Build and deployment → Source: GitHub Actions*
 
 ## Safety and scope
 
-- Production suite is read-only and targets only the public homepage.
+- Production suite is read-only and targets the public website and product catalogue. The purchase journey selects a product plan and proceeds to the cart/checkout review checkpoint only; it does not submit customer details, create an order, initiate payment, or perform renewal.
 - Checkout and renewal suites are executed only against QA OCI.
 - Payment submission is not part of the automated run.
 - Security-header observations are attached to the report for review; absence is not automatically treated as a confirmed vulnerability.
