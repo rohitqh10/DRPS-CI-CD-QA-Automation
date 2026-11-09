@@ -18,7 +18,7 @@ concurrency:
 jobs:
   production-live-site:
     name: "1. Production Live Website QA"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
       CI: "true"
@@ -64,7 +64,7 @@ jobs:
   qa-oci-checkout-renewal:
     name: "2. QA OCI Checkout & Renewal"
     # Set QA_RUNNER_LABELS to ["self-hosted","linux","x64"] after DevOps registers an authorized runner.
-    runs-on: ${{ fromJSON(vars.QA_RUNNER_LABELS || '["ubuntu-latest"]') }}
+    runs-on: ${{ fromJSON(vars.QA_RUNNER_LABELS || '["ubuntu-24.04"]') }}
     timeout-minutes: 35
     env:
       CI: "true"
